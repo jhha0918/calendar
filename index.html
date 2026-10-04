@@ -52,25 +52,36 @@ button.primary:hover{filter:brightness(1.12);background:var(--navy)}
 .wk.cur{color:var(--navy);font-weight:800;opacity:1}
 .cell{min-height:70px;min-width:0;overflow:hidden;border-top:1px dashed var(--line);padding:5px 4px;display:flex;flex-direction:column;align-items:center;
   transition:background .2s,transform .2s,box-shadow .2s;position:relative}
+.cell:not(.blank){cursor:pointer}
+.cell:focus-visible{outline:2px solid var(--navy);outline-offset:-2px}
 .cell:not(.blank):hover{background:var(--hover)}
 .solar{font-weight:600;font-size:.95rem;min-width:1.9em;height:1.9em;line-height:1.9em;text-align:center;border-radius:50%}
 .cell.sun .solar,.cell.holiday .solar,.cell.hnameCell .solar{color:var(--sun)}
 .cell.sat:not(.holiday) .solar{color:var(--sat)}
-.lunar{font-size:.68rem;color:var(--muted);margin-top:1px;opacity:.85;white-space:nowrap}
+.memo{font-size:.64rem;line-height:1.25;color:var(--navy);margin-top:2px;width:100%;padding:0 3px;text-align:left;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-all}
+.memo::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--navy);margin-right:3px;vertical-align:middle}
+.hint{margin:10px 2px 0;font-size:.78rem;color:var(--muted);text-align:center}
+dialog{border:1px solid var(--line);border-radius:16px;background:var(--paper);color:var(--text);font-family:var(--font);padding:18px;width:min(92vw,380px);box-shadow:0 10px 40px rgba(0,0,0,.3)}
+dialog::backdrop{background:rgba(20,23,38,.45)}
+dialog h2{margin:0 0 4px;font-size:1.05rem;color:var(--navy)}
+dialog .sub{font-size:.8rem;color:var(--sun);min-height:1.1em;margin-bottom:8px}
+dialog textarea{width:100%;min-height:120px;resize:vertical;padding:10px;border:1px solid var(--line);border-radius:10px;font:inherit;background:var(--input);color:inherit}
+dialog textarea:focus{outline:2px solid var(--navy);outline-offset:1px}
+.dlgbtns{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.dlgbtns .danger{color:var(--sun);margin-right:auto}
 .hname{font-size:.62rem;color:var(--sun);margin-top:1px;line-height:1.15;text-align:center;word-break:keep-all}
 .cell.today .solar{background:var(--navy);color:var(--on-navy)}
 .cell.today .solar::after{content:none}
 .cell.selected{background:var(--hl);color:var(--on-navy);border-radius:12px;border-top-color:transparent;transform:scale(1.07);z-index:1;box-shadow:0 4px 14px rgba(44,62,115,.35)}
 .cell.selected:hover{background:var(--hl)}
-.cell.selected .solar,.cell.selected .lunar,.cell.selected .hname{color:var(--on-navy)}
-.cell.selected .lunar{opacity:.85}
+.cell.selected .memo::before{background:var(--on-navy)}
 .cell.selected.today .solar{background:var(--on-navy);color:var(--hl)}
 @media(max-width:520px){
   :root{--wkw:1.6rem}.wk{font-size:.58rem;padding-top:8px}
   .wrap{padding:10px 8px 24px}.card{padding:14px 12px}
   .months{grid-template-columns:repeat(4,minmax(0,1fr))}
   .cell{min-height:60px;padding:4px 1px}
-  .solar{font-size:.85rem}.lunar{font-size:.58rem}.hname{font-size:.55rem}
+  .solar{font-size:.85rem}.hname{font-size:.55rem}.memo{font-size:.56rem;padding:0 1px}
   .cell.selected{transform:scale(1.04)}
 }
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -97,8 +108,19 @@ button.primary:hover{filter:brightness(1.12);background:var(--navy)}
     <div class="title" id="monthTitle"></div>
     <div class="dow"><div></div><div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div></div>
     <div class="grid" id="grid"></div>
+    <div class="hint">날짜를 누르면 메모를 남길 수 있어요</div>
   </div>
 </div>
+<dialog id="memoDialog">
+  <h2 id="memoDate"></h2>
+  <div class="sub" id="memoSub"></div>
+  <textarea id="memoText" maxlength="500" placeholder="메모를 입력하세요" aria-label="메모"></textarea>
+  <div class="dlgbtns">
+    <button type="button" class="danger" id="memoDelete">삭제</button>
+    <button type="button" id="memoCancel">취소</button>
+    <button type="button" class="primary" id="memoSave">저장</button>
+  </div>
+</dialog>
 <script>
 // 연도별 음력 데이터(1900~2100). 1900~2050년은 한국천문연구원(KASI) 기준, 2051~2100년은 천문 계산(ICU) 기준.
 // 형식: (윤달 월 << 13) | 월별 대소 비트마스크(비트 i = i번째 달이 30일이면 1)
@@ -303,6 +325,64 @@ function getWeekOfMonth(y, m, d) {
   return Math.floor((firstDow + d - 1) / 7) + 1;
 }
 
+const MEMO_KEY = "calendarMemos";
+let memoStore = {};
+try { memoStore = JSON.parse(localStorage.getItem(MEMO_KEY)) || {}; } catch (e) { memoStore = {}; }
+
+/**
+ * 메모를 브라우저(localStorage)에 저장
+ * 저장소를 쓸 수 없으면 현재 페이지 동안만 유지됨
+ */
+function persistMemos() {
+  try { localStorage.setItem(MEMO_KEY, JSON.stringify(memoStore)); } catch (e) { /* 저장소 사용 불가 */ }
+}
+
+/**
+ * 날짜 키 생성
+ * @param {number} y 연
+ * @param {number} m 월
+ * @param {number} d 일
+ * @returns {string} "YYYY-MM-DD"
+ */
+function dateKey(y, m, d) {
+  return y + "-" + String(m).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+}
+
+let memoEditingKey = null;
+
+/**
+ * 메모 편집 창 열기
+ * @param {number} y 연
+ * @param {number} m 월
+ * @param {number} d 일
+ */
+function openMemo(y, m, d) {
+  memoEditingKey = dateKey(y, m, d);
+  el("memoDate").textContent = y + "년 " + m + "월 " + d + "일 (" + WEEKDAYS[new Date(y, m - 1, d).getDay()] + ")";
+  el("memoSub").textContent = getHolidayName(y, m, d) || "";
+  el("memoText").value = memoStore[memoEditingKey] || "";
+  el("memoDelete").style.visibility = memoStore[memoEditingKey] ? "visible" : "hidden";
+  el("memoDialog").showModal();
+  el("memoText").focus();
+}
+
+/** 메모 저장 (내용이 비어 있으면 삭제) */
+function saveMemo() {
+  const text = el("memoText").value.trim();
+  if (text) memoStore[memoEditingKey] = text; else delete memoStore[memoEditingKey];
+  persistMemos();
+  el("memoDialog").close();
+  renderCalendar();
+}
+
+/** 메모 삭제 */
+function deleteMemo() {
+  delete memoStore[memoEditingKey];
+  persistMemos();
+  el("memoDialog").close();
+  renderCalendar();
+}
+
 /** 선택된 연/월의 달력 그리기 */
 function renderCalendar() {
   el("monthTitle").textContent = state.y + "년 " + state.m + "월";
@@ -321,16 +401,36 @@ function renderCalendar() {
   for (let d = 1; d <= days; d++) {
     const dow = (firstDow + d - 1) % 7;
     if (dow === 0 && d > 1) addWeekLabel(getWeekOfMonth(state.y, state.m, d));
-    const l = solarToLunar(state.y, state.m, d);
     let cls = "cell" + (dow === 0 ? " sun" : dow === 6 ? " sat" : "");
     if (state.y === today.y && state.m === today.m && d === today.d) cls += " today";
     const s = state.selected;
     if (s && s.y === state.y && s.m === state.m && s.d === d) cls += " selected";
     const hn = getHolidayName(state.y, state.m, d);
     if (hn) cls += " holiday";
-    let lt = "";
-    if (l) lt = l.day === 1 ? (l.isLeap ? "윤" : "") + l.month + "월 1일" : String(l.day);
-    grid.insertAdjacentHTML("beforeend", '<div class="' + cls + '"' + (hn ? ' title="' + hn + '"' : "") + '><span class="solar">' + d + '</span><span class="lunar">' + lt + "</span>" + (hn ? '<span class="hname">' + hn + "</span>" : "") + "</div>");
+    const memo = memoStore[dateKey(state.y, state.m, d)];
+    const cell = document.createElement("div");
+    cell.className = cls;
+    cell.tabIndex = 0;
+    cell.setAttribute("role", "button");
+    cell.dataset.day = d;
+    if (hn) cell.title = hn;
+    const solar = document.createElement("span");
+    solar.className = "solar";
+    solar.textContent = d;
+    cell.appendChild(solar);
+    if (hn) {
+      const hs = document.createElement("span");
+      hs.className = "hname";
+      hs.textContent = hn;
+      cell.appendChild(hs);
+    }
+    if (memo) {
+      const ms = document.createElement("span");
+      ms.className = "memo";
+      ms.textContent = memo;
+      cell.appendChild(ms);
+    }
+    grid.appendChild(cell);
   }
 }
 
@@ -368,6 +468,18 @@ function initConvertForm() {
 }
 
 initConvertForm();
+el("grid").addEventListener("click", (e) => {
+  const cell = e.target.closest(".cell[data-day]");
+  if (cell) openMemo(state.y, state.m, +cell.dataset.day);
+});
+el("grid").addEventListener("keydown", (e) => {
+  const cell = e.target.closest(".cell[data-day]");
+  if (cell && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openMemo(state.y, state.m, +cell.dataset.day); }
+});
+el("memoSave").onclick = saveMemo;
+el("memoDelete").onclick = deleteMemo;
+el("memoCancel").onclick = () => el("memoDialog").close();
+el("memoText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) saveMemo(); });
 el("convertBtn").onclick = convert;
 ["lunarYear", "lunarDay"].forEach((id) => el(id).addEventListener("keydown", (e) => { if (e.key === "Enter") convert(); }));
 el("prevYear").onclick = () => { if (state.y > 1900) { state.y--; render(); } };
