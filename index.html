@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>양력·음력 달력</title>
+<style>
+  :root{--bg:#f5f6fa;--card:#fff;--text:#222;--muted:#8a8f9c;--accent:#3b6df0;--sun:#e0463c;--sat:#2f6fd6;--line:#e6e8ee;--hl:#fff2c4}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:"Malgun Gothic",system-ui,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:16px}
+  .card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+  h1{font-size:1.25rem;margin:0 0 12px}
+  .convert{display:flex;gap:8px;flex-wrap:wrap}
+  .convert{align-items:center}
+  .convert input[type=number],.convert select{padding:10px;border:1px solid var(--line);border-radius:8px;font-size:1rem;background:#fff;color:inherit}
+  .convert input[type=number]{width:5.5em}
+  .convert label{display:flex;align-items:center;gap:4px;white-space:nowrap}
+  .convert input[type=checkbox]{width:1.1em;height:1.1em}
+  button{font:inherit;cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 12px}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  #result{margin-top:12px;min-height:1.5em;font-weight:bold}
+  #result.error{color:var(--sun)}
+  .yearbar{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:10px;font-size:1.15rem;font-weight:bold}
+  .months{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+  .months button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .dow,.grid{display:grid;grid-template-columns:repeat(7,1fr)}
+  .title{text-align:center;font-size:1.2rem;font-weight:bold;margin-bottom:10px}
+  .dow div{text-align:center;padding:6px 0;font-weight:bold;font-size:.9rem}
+  .dow div:first-child,.cell.sun .solar{color:var(--sun)}
+  .dow div:last-child,.cell.sat .solar{color:var(--sat)}
+  .cell{min-height:64px;border-top:1px solid var(--line);padding:4px;display:flex;flex-direction:column;align-items:flex-start}
+  .cell,.dow div,.months button{min-width:0}
+  .solar{font-weight:bold;font-size:1rem}
+  .lunar{font-size:.7rem;color:var(--muted);margin-top:2px}
+  .cell.holiday .solar{color:var(--sun)}
+  .hname{font-size:.65rem;color:var(--sun);margin-top:1px;line-height:1.15;word-break:keep-all}
+  .cell.today{outline:2px solid var(--accent);outline-offset:-2px;border-radius:6px}
+  .cell.today .solar::after{content:" 오늘";font-size:.65rem;color:var(--accent)}
+  .cell.selected{background:var(--hl)}
+  @media(max-width:520px){.wrap{padding:8px}.months{grid-template-columns:repeat(4,1fr)}.cell{min-height:52px;padding:2px}.lunar{font-size:.6rem}.solar{font-size:.9rem}.cell.today .solar::after{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>음력 → 양력 변환</h1>
+    <div class="convert">
+      <input type="number" id="lunarYear" min="1900" max="2100" aria-label="음력 연도"> 년
+      <select id="lunarMonth" aria-label="음력 월"></select> 월
+      <input type="number" id="lunarDay" min="1" max="30" aria-label="음력 일" style="width:4.5em"> 일
+      <label><input type="checkbox" id="lunarLeap">윤달</label>
+      <button class="primary" id="convertBtn">변환</button>
+    </div>
+    <div id="result"></div>
+  </div>
+  <div class="card">
+    <div class="yearbar"><button id="prevYear" aria-label="이전 해">◀</button><span id="yearLabel"></span><button id="nextYear" aria-label="다음 해">▶</button></div>
+    <div class="months" id="months"></div>
+  </div>
+  <div class="card">
+    <div class="title" id="monthTitle"></div>
+    <div class="dow"><div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div></div>
+    <div class="grid" id="grid"></div>
+  </div>
+</div>
+<script>
+// 연도별 음력 데이터(1900~2100). 1900~2050년은 한국천문연구원(KASI) 기준, 2051~2100년은 천문 계산(ICU) 기준.
+// 형식: (윤달 월 << 13) | 월별 대소 비트마스크(비트 i = i번째 달이 30일이면 1)
+const LUNAR_START_YEAR = 1900;
+const LUNAR_END_YEAR = 2100;
+const LUNAR_TABLE = [
+  71378,1874,3749,46666,1611,2715,38230,1386,2905,22354,
+  1874,56101,2853,2635,45723,2733,1386,19305,2985,64338,
+  3474,3365,47693,2390,693,38317,1748,3497,23954,3730,
+  52518,1319,2647,45750,2778,1748,28329,1865,63123,2707,
+  1323,51803,2413,2922,39764,2980,2889,23187,2709,62763,
+  1325,2733,46442,3506,3492,32073,3402,72341,2710,1366,
+  51893,2773,1746,36517,3749,3658,27798,2715,62806,1386,
+  2905,46930,1874,1829,38475,2635,70315,685,1387,52073,
+  3497,3474,39717,3365,88653,2646,694,54701,1748,3497,
+  48530,3730,3366,27222,2647,70326,2906,1748,44745,1865,
+  1683,38183,1323,2651,21850,874,64341,2980,2889,47763,
+  2709,1325,27229,2733,79274,1490,3493,48458,3402,2709,
+  38189,1366,2741,21930,1746,52901,3749,3658,44182,3227,
+  1370,27349,2921,96082,1874,2853,54859,2635,1195,42331,
+  1389,2921,23378,3474,64805,3365,2637,46253,694,1461,
+  28073,3785,73362,3730,3366,51798,2647,1238,34517,1877,
+  1865,28307,1683,62763,1323,2651,46426,1386,2917,38730,
+  2889,72341,2709,1325,51885,2741,1450,35749,3493,3402,
+  31893,3222,63822,1366,2741,46514,1746,3749,36426,1675,
+  68759,1195,1371,51926,2922,1874,38693,2885,2699,21659,
+  1195,
+];
+const BASE_UTC = Date.UTC(1900, 0, 31); // 음력 1900-01-01
+const DAY_MS = 86400000;
+
+/**
+ * 해당 음력 연도의 월 구성 반환
+ * @param {number} year 음력 연도
+ * @returns {{lengths:number[], monthNums:number[], total:number}} monthNums: 윤달은 음수
+ */
+function getLunarYearInfo(year) {
+  const v = LUNAR_TABLE[year - LUNAR_START_YEAR];
+  const leapMonth = v >> 13;
+  const count = leapMonth ? 13 : 12;
+  const lengths = [];
+  const monthNums = [];
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    const len = (v >> i) & 1 ? 30 : 29;
+    lengths.push(len);
+    total += len;
+    // leapMonth 번째 달(1-based) 다음 달(인덱스 leapMonth)이 윤달
+    if (!leapMonth || i < leapMonth) monthNums.push(i + 1);
+    else if (i === leapMonth) monthNums.push(-leapMonth);
+    else monthNums.push(i);
+  }
+  return { lengths, monthNums, total };
+}
+
+/**
+ * 양력 날짜를 음력으로 변환
+ * @param {number} y 양력 연
+ * @param {number} m 양력 월(1~12)
+ * @param {number} d 양력 일
+ * @returns {{year:number, month:number, day:number, isLeap:boolean}|null} 범위 밖이면 null
+ */
+function solarToLunar(y, m, d) {
+  let offset = Math.round((Date.UTC(y, m - 1, d) - BASE_UTC) / DAY_MS);
+  if (offset < 0) return null;
+  for (let year = LUNAR_START_YEAR; year <= LUNAR_END_YEAR; year++) {
+    const info = getLunarYearInfo(year);
+    if (offset < info.total) {
+      let i = 0;
+      while (offset >= info.lengths[i]) { offset -= info.lengths[i]; i++; }
+      const n = info.monthNums[i];
+      return { year, month: Math.abs(n), day: offset + 1, isLeap: n < 0 };
+    }
+    offset -= info.total;
+  }
+  return null;
+}
+
+/**
+ * 음력 날짜를 양력으로 변환
+ * @param {number} year 음력 연
+ * @param {number} month 음력 월(1~12)
+ * @param {boolean} isLeap 윤달 여부
+ * @param {number} day 음력 일
+ * @returns {{date?:{y:number,m:number,d:number}, error?:string}}
+ */
+function lunarToSolar(year, month, isLeap, day) {
+  if (!(year >= LUNAR_START_YEAR && year <= LUNAR_END_YEAR)) return { error: "음력 연도는 1900~2100년만 지원합니다." };
+  let offset = 0;
+  for (let y = LUNAR_START_YEAR; y < year; y++) offset += getLunarYearInfo(y).total;
+  const info = getLunarYearInfo(year);
+  const idx = info.monthNums.indexOf(isLeap ? -month : month);
+  if (idx < 0) return { error: year + "년에는 " + (isLeap ? "윤" : "") + month + "월이 없습니다." + (isLeap ? " (윤달 없음)" : "") };
+  if (!(day >= 1 && day <= info.lengths[idx])) return { error: year + "년 " + (isLeap ? "윤" : "") + month + "월은 " + info.lengths[idx] + "일까지입니다." };
+  for (let i = 0; i < idx; i++) offset += info.lengths[i];
+  const dt = new Date(BASE_UTC + (offset + day - 1) * DAY_MS);
+  if (dt.getTime() > Date.UTC(2100, 11, 31)) return { error: "양력 2100-12-31 이후는 지원하지 않습니다." };
+  return { date: { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() } };
+}
+
+const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+// 법정 공휴일 외 임시공휴일(연도별로 지정되므로 알려진 날짜만 수록)
+const TEMP_HOLIDAYS = {
+  "2015-08-14": "임시공휴일", "2016-05-06": "임시공휴일", "2017-05-09": "대통령 선거일", "2017-10-02": "임시공휴일",
+  "2020-08-17": "임시공휴일", "2022-03-09": "대통령 선거일", "2022-06-01": "지방선거일", "2023-10-02": "임시공휴일",
+  "2024-04-10": "국회의원 선거일", "2024-10-01": "국군의 날", "2025-01-27": "임시공휴일", "2025-06-03": "대통령 선거일",
+  "2026-06-03": "지방선거일"
+};
+const holidayCache = {};
+
+/**
+ * 양력 연도의 공휴일 맵 계산 (2013~2100년, 대체공휴일 포함)
+ * @param {number} year 양력 연
+ * @returns {Object<string,string>} "m-d" -> 공휴일 이름
+ */
+function getHolidays(year) {
+  if (holidayCache[year]) return holidayCache[year];
+  const map = {};
+  if (year < 2013 || year > 2100) return (holidayCache[year] = map);
+  const key = (dt) => (dt.getUTCMonth() + 1) + "-" + dt.getUTCDate();
+  const utc = (y, m, d) => new Date(Date.UTC(y, m - 1, d));
+  const addDays = (dt, n) => new Date(dt.getTime() + n * DAY_MS);
+  const fromLunar = (m, d) => { const r = lunarToSolar(year, m, false, d); return r.date ? utc(r.date.y, r.date.m, r.date.d) : null; };
+  // groups: {name, dates[], rule} rule: "sun"=일요일/겹침, "child"=어린이날, "wk"=토·일, "none"
+  const groups = [];
+  const seol = fromLunar(1, 1);
+  const chu = fromLunar(8, 15);
+  const sub = year >= 2021;
+  groups.push({ name: "신정", dates: [utc(year, 1, 1)], rule: "none" });
+  if (seol) groups.push({ name: "설날", dates: [addDays(seol, -1), seol, addDays(seol, 1)], rule: "holiday" });
+  groups.push({ name: "삼일절", dates: [utc(year, 3, 1)], rule: sub ? "wk" : "none" });
+  groups.push({ name: "어린이날", dates: [utc(year, 5, 5)], rule: "child" });
+  const buddha = fromLunar(4, 8);
+  if (buddha) groups.push({ name: "부처님오신날", dates: [buddha], rule: sub ? "wk" : "none" });
+  groups.push({ name: "현충일", dates: [utc(year, 6, 6)], rule: "none" });
+  groups.push({ name: "광복절", dates: [utc(year, 8, 15)], rule: sub ? "wk" : "none" });
+  if (chu) groups.push({ name: "추석", dates: [addDays(chu, -1), chu, addDays(chu, 1)], rule: "holiday" });
+  groups.push({ name: "개천절", dates: [utc(year, 10, 3)], rule: sub ? "wk" : "none" });
+  groups.push({ name: "한글날", dates: [utc(year, 10, 9)], rule: sub ? "wk" : "none" });
+  groups.push({ name: "성탄절", dates: [utc(year, 12, 25)], rule: sub ? "wk" : "none" });
+
+  const count = {};
+  groups.forEach((g) => g.dates.forEach((dt) => { count[dt.getTime()] = (count[dt.getTime()] || 0) + 1; }));
+  const taken = (dt) => !!map[key(dt)];
+  groups.forEach((g) => g.dates.forEach((dt) => { map[key(dt)] = g.name; }));
+  Object.keys(TEMP_HOLIDAYS).forEach((k) => {
+    const dt = new Date(k + "T00:00:00Z");
+    if (dt.getUTCFullYear() === year) map[key(dt)] = TEMP_HOLIDAYS[k];
+  });
+  // 대체공휴일 (2014년부터 설·추석·어린이날, 2021년부터 국경일 등 확대)
+  groups.forEach((g) => {
+    let need = false;
+    const dows = g.dates.map((dt) => dt.getUTCDay());
+    const overlap = g.dates.some((dt) => count[dt.getTime()] > 1);
+    if (g.rule === "holiday" && year >= 2014) need = dows.includes(0) || overlap;
+    else if (g.rule === "child" && year >= 2014) need = dows[0] === 0 || overlap || (sub && dows[0] === 6);
+    else if (g.rule === "wk") need = dows[0] === 0 || dows[0] === 6;
+    if (!need) return;
+    let dt = addDays(g.dates[g.dates.length - 1], 1);
+    while (dt.getUTCDay() === 0 || dt.getUTCDay() === 6 || taken(dt)) dt = addDays(dt, 1);
+    map[key(dt)] = "대체공휴일(" + g.name + ")";
+  });
+  return (holidayCache[year] = map);
+}
+
+/**
+ * 해당 양력 날짜의 공휴일 이름 반환
+ * @param {number} y 양력 연
+ * @param {number} m 양력 월
+ * @param {number} d 양력 일
+ * @returns {string|undefined}
+ */
+function getHolidayName(y, m, d) { return getHolidays(y)[m + "-" + d]; }
+
+const now = new Date();
+const today = { y: now.getFullYear(), m: now.getMonth() + 1, d: now.getDate() };
+const state = { y: today.y, m: today.m, selected: null };
+const el = (id) => document.getElementById(id);
+
+/** 월 버튼과 연도 표시 갱신 */
+function renderMonths() {
+  el("yearLabel").textContent = state.y + "년";
+  el("months").innerHTML = "";
+  for (let m = 1; m <= 12; m++) {
+    const b = document.createElement("button");
+    b.textContent = m + "월";
+    if (m === state.m) b.className = "active";
+    b.onclick = () => { state.m = m; render(); };
+    el("months").appendChild(b);
+  }
+}
+
+/** 선택된 연/월의 달력 그리기 */
+function renderCalendar() {
+  el("monthTitle").textContent = state.y + "년 " + state.m + "월";
+  const grid = el("grid");
+  grid.innerHTML = "";
+  const firstDow = new Date(state.y, state.m - 1, 1).getDay();
+  const days = new Date(state.y, state.m, 0).getDate();
+  for (let i = 0; i < firstDow; i++) grid.insertAdjacentHTML("beforeend", '<div class="cell"></div>');
+  for (let d = 1; d <= days; d++) {
+    const dow = (firstDow + d - 1) % 7;
+    const l = solarToLunar(state.y, state.m, d);
+    let cls = "cell" + (dow === 0 ? " sun" : dow === 6 ? " sat" : "");
+    if (state.y === today.y && state.m === today.m && d === today.d) cls += " today";
+    const s = state.selected;
+    if (s && s.y === state.y && s.m === state.m && s.d === d) cls += " selected";
+    const hn = getHolidayName(state.y, state.m, d);
+    if (hn) cls += " holiday";
+    let lt = "";
+    if (l) lt = l.day === 1 ? (l.isLeap ? "윤" : "") + l.month + "월 1일" : String(l.day);
+    grid.insertAdjacentHTML("beforeend", '<div class="' + cls + '"' + (hn ? ' title="' + hn + '"' : "") + '><span class="solar">' + d + '</span><span class="lunar">' + lt + "</span>" + (hn ? '<span class="hname">' + hn + "</span>" : "") + "</div>");
+  }
+}
+
+/** 전체 화면 갱신 */
+function render() { renderMonths(); renderCalendar(); }
+
+/** 입력된 음력 날짜를 양력으로 변환하고 달력을 이동 */
+function convert() {
+  const res = el("result");
+  res.className = "error";
+  const year = parseInt(el("lunarYear").value, 10);
+  const month = parseInt(el("lunarMonth").value, 10);
+  const day = parseInt(el("lunarDay").value, 10);
+  const isLeap = el("lunarLeap").checked;
+  if (!year || !day) { res.textContent = "음력 연도와 일을 입력해 주세요."; return; }
+  const r = lunarToSolar(year, month, isLeap, day);
+  if (!r.date) { res.textContent = r.error; return; }
+  const { y, m, d } = r.date;
+  const wd = WEEKDAYS[new Date(y, m - 1, d).getDay()];
+  const hn = getHolidayName(y, m, d);
+  res.className = "";
+  res.textContent = "음력 " + year + "년 " + (isLeap ? "윤" : "") + month + "월 " + day + "일 → 양력 " + y + "년 " + m + "월 " + d + "일 (" + wd + ")" + (hn ? " · " + hn : "");
+  state.y = y; state.m = m; state.selected = { y, m, d };
+  render();
+}
+
+/** 변환 입력칸의 초기값(오늘의 음력)을 채움 */
+function initConvertForm() {
+  for (let m = 1; m <= 12; m++) el("lunarMonth").insertAdjacentHTML("beforeend", '<option value="' + m + '">' + m + "</option>");
+  const l = solarToLunar(today.y, today.m, today.d);
+  if (l) {
+    el("lunarYear").value = l.year; el("lunarMonth").value = l.month;
+    el("lunarDay").value = l.day; el("lunarLeap").checked = l.isLeap;
+  }
+}
+
+initConvertForm();
+el("convertBtn").onclick = convert;
+["lunarYear", "lunarDay"].forEach((id) => el(id).addEventListener("keydown", (e) => { if (e.key === "Enter") convert(); }));
+el("prevYear").onclick = () => { if (state.y > 1900) { state.y--; render(); } };
+el("nextYear").onclick = () => { if (state.y < 2100) { state.y++; render(); } };
+render();
+</script>
+</body>
+</html>
