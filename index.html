@@ -41,12 +41,15 @@ button.primary:hover{filter:brightness(1.12);background:var(--navy)}
 .calendar::before{content:"";position:absolute;top:10px;left:18px;right:18px;height:8px;
   background:radial-gradient(circle,var(--line) 0 3px,transparent 3.5px) 0 0/22px 8px repeat-x}
 .title{text-align:center;font-size:1.4rem;font-weight:700;margin-bottom:12px;color:var(--navy);letter-spacing:-.02em}
-.dow,.grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
+.dow,.grid{display:grid;grid-template-columns:var(--wkw) repeat(7,minmax(0,1fr))}
+:root{--wkw:2.4rem}
 .dow div{text-align:center;padding:6px 0;font-weight:600;font-size:.85rem;color:var(--muted)}
-.dow div:first-child{color:var(--sun)}
+.dow div:nth-child(2){color:var(--sun)}
 .dow div:last-child{color:var(--sat)}
 .grid.flip{animation:flip .38s ease both}
 @keyframes flip{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.wk{border-top:1px dashed var(--line);padding:9px 0 0;text-align:center;font-size:.68rem;color:var(--muted);opacity:.85}
+.wk.cur{color:var(--navy);font-weight:800;opacity:1}
 .cell{min-height:70px;min-width:0;overflow:hidden;border-top:1px dashed var(--line);padding:5px 4px;display:flex;flex-direction:column;align-items:center;
   transition:background .2s,transform .2s,box-shadow .2s;position:relative}
 .cell:not(.blank):hover{background:var(--hover)}
@@ -63,6 +66,7 @@ button.primary:hover{filter:brightness(1.12);background:var(--navy)}
 .cell.selected .lunar{opacity:.85}
 .cell.selected.today .solar{background:var(--on-navy);color:var(--hl)}
 @media(max-width:520px){
+  :root{--wkw:1.6rem}.wk{font-size:.58rem;padding-top:8px}
   .wrap{padding:10px 8px 24px}.card{padding:14px 12px}
   .months{grid-template-columns:repeat(4,minmax(0,1fr))}
   .cell{min-height:60px;padding:4px 1px}
@@ -91,7 +95,7 @@ button.primary:hover{filter:brightness(1.12);background:var(--navy)}
   </div>
   <div class="card calendar">
     <div class="title" id="monthTitle"></div>
-    <div class="dow"><div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div></div>
+    <div class="dow"><div></div><div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div></div>
     <div class="grid" id="grid"></div>
   </div>
 </div>
@@ -287,6 +291,18 @@ function renderMonths() {
   }
 }
 
+/**
+ * 그 달의 몇째 주인지 계산 (1일이 속한 줄이 1주차, 일요일 시작 기준)
+ * @param {number} y 양력 연
+ * @param {number} m 양력 월
+ * @param {number} d 양력 일
+ * @returns {number}
+ */
+function getWeekOfMonth(y, m, d) {
+  const firstDow = new Date(y, m - 1, 1).getDay();
+  return Math.floor((firstDow + d - 1) / 7) + 1;
+}
+
 /** 선택된 연/월의 달력 그리기 */
 function renderCalendar() {
   el("monthTitle").textContent = state.y + "년 " + state.m + "월";
@@ -297,9 +313,14 @@ function renderCalendar() {
   grid.classList.add("flip");
   const firstDow = new Date(state.y, state.m - 1, 1).getDay();
   const days = new Date(state.y, state.m, 0).getDate();
+  const isThisMonth = state.y === today.y && state.m === today.m;
+  const todayWeek = isThisMonth ? getWeekOfMonth(today.y, today.m, today.d) : 0;
+  const addWeekLabel = (w) => grid.insertAdjacentHTML("beforeend", '<div class="wk' + (w === todayWeek ? " cur" : "") + '">' + w + "주</div>");
+  addWeekLabel(1);
   for (let i = 0; i < firstDow; i++) grid.insertAdjacentHTML("beforeend", '<div class="cell blank"></div>');
   for (let d = 1; d <= days; d++) {
     const dow = (firstDow + d - 1) % 7;
+    if (dow === 0 && d > 1) addWeekLabel(getWeekOfMonth(state.y, state.m, d));
     const l = solarToLunar(state.y, state.m, d);
     let cls = "cell" + (dow === 0 ? " sun" : dow === 6 ? " sat" : "");
     if (state.y === today.y && state.m === today.m && d === today.d) cls += " today";
@@ -331,7 +352,7 @@ function convert() {
   const wd = WEEKDAYS[new Date(y, m - 1, d).getDay()];
   const hn = getHolidayName(y, m, d);
   res.className = "";
-  res.textContent = "음력 " + year + "년 " + (isLeap ? "윤" : "") + month + "월 " + day + "일 → 양력 " + y + "년 " + m + "월 " + d + "일 (" + wd + ")" + (hn ? " · " + hn : "");
+  res.textContent = "음력 " + year + "년 " + (isLeap ? "윤" : "") + month + "월 " + day + "일 → 양력 " + y + "년 " + m + "월 " + d + "일 (" + wd + ") · " + m + "월 " + getWeekOfMonth(y, m, d) + "주차" + (hn ? " · " + hn : "");
   state.y = y; state.m = m; state.selected = { y, m, d };
   render();
 }
